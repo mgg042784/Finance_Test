@@ -81,15 +81,37 @@ failed_tickers = []
 for idx, ticker in enumerate(top_energy_stocks.index, 1):
     try:
         print(f"[{idx}/15] Downloading data for {ticker}...", end=" ")
-        
-        # Download historical data (1 year for better analysis)
-        stock_data = yf.download(ticker, period='1y', progress=False)
-        
-        if stock_data.empty:
-            print("FAILED - No data")
+
+        # Build a list of candidate Yahoo tickers to try
+        def candidate_tickers(orig):
+            cand = [orig]
+            # common replacements
+            cand.append(orig.replace('-', '.'))
+            # strip common suffixes like '-WT', '-A', '-B'
+            if '-' in orig:
+                cand.append(orig.split('-')[0])
+            # common exchange suffixes to try
+            suffixes = ['.L', '.TO', '.V', '.PA', '.MX', '.SA', '.KS', '.SS', '.SZ']
+            for s in suffixes:
+                cand.append(orig + s)
+            # also try upper/lower variants
+            cand = list(dict.fromkeys(cand))
+            return cand
+
+        stock_data = None
+        used_ticker = None
+        for attempt in candidate_tickers(ticker):
+            data_try = yf.download(attempt, period='1y', progress=False)
+            if not data_try.empty:
+                stock_data = data_try
+                used_ticker = attempt
+                break
+
+        if stock_data is None or stock_data.empty:
+            print("FAILED - No data (tried variants)")
             failed_tickers.append(ticker)
             continue
-        
+
         # Get current price (last closing price)
         current_price = stock_data['Close'].iloc[-1]
         
@@ -113,14 +135,14 @@ for idx, ticker in enumerate(top_energy_stocks.index, 1):
         # Calculate distance from 52-week low (% above low)
         distance_from_low = ((current_price - low_52w) / low_52w) * 100
         
-        # Get company info
-        stock_info = yf.Ticker(ticker)
+        # Get company info (try the used ticker variant when available)
+        stock_info = yf.Ticker(used_ticker or ticker)
         pe_ratio = stock_info.info.get('trailingPE', 'N/A')
         market_cap = stock_info.info.get('marketCap', 'N/A')
         div_yield = stock_info.info.get('dividendYield', 'N/A')
         
         price_data_list.append({
-            'Ticker': ticker,
+            'Ticker': used_ticker or ticker,
             'Company': top_energy_stocks.loc[ticker, 'name'],
             'Current Price': f"${current_price:.2f}",
             'Price 1Y Ago': f"${price_1y_ago:.2f}",
@@ -135,7 +157,7 @@ for idx, ticker in enumerate(top_energy_stocks.index, 1):
             'Div Yield %': div_yield if isinstance(div_yield, str) else f"{div_yield*100:.2f}%"
         })
         
-        print("OK")
+        print(f"OK (using {used_ticker or ticker})")
         
     except Exception as e:
         print(f"ERROR - {str(e)}")
